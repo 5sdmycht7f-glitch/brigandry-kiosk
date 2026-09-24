@@ -5,9 +5,10 @@
 #  Turns a fresh minimal Ubuntu Server install into a locked-down web kiosk:
 #    - a passwordless "kiosk" user with no sudo
 #    - Google Chrome in kiosk mode inside cage (a single-app Wayland compositor)
-#    - URL allowlist, downloads/printing/devtools off
-#    - idle timeout: after N seconds of no input, Chrome is killed and relaunched
-#      back at the homepage (the profile is KEPT so the kiosk login survives)
+#    - downloads/printing/devtools/incognito/sign-in off
+#      (URL allowlist present but DISARMED — see the Chrome policy section)
+#    - idle timeout: after N seconds of no input, the session ends and systemd
+#      relaunches it clean at the homepage (profile KEPT so the login survives)
 #    - Wi-Fi on the guest SSID
 #    - unattended security updates + nightly 4 AM reboot
 #    - SSH key-only login (if you pass a public key)
@@ -43,8 +44,8 @@ ALLOWLIST=(
   "tcgplayerpro.com"
 )
 
-# Seconds of no keyboard/mouse input before the session resets. 300 = 5 min.
-IDLE_SECONDS=300
+# Seconds of no keyboard/mouse input before the session resets. 600 = 10 min.
+IDLE_SECONDS=600
 
 # Wi-Fi network the kiosk joins. This is only the DEFAULT offered at run time;
 # the script asks you to confirm or retype it. The password is also asked for
@@ -347,10 +348,12 @@ network:
           password: "$WIFI_PASS"
 EOF
   chmod 600 /etc/netplan/60-kiosk-wifi.yaml   # owner read/write only — it holds a password
-  #  Also mark the wired port optional so boot doesn't stall when it's unplugged.
-  sed -i 's/^\(\s*dhcp4: true\)$/\1\n      optional: true/' /etc/netplan/50-cloud-init.yaml 2>/dev/null || true
+  #  Validate the YAML now (writes backend config, does NOT touch live links).
+  #  We deliberately do NOT run "netplan apply" here: applying over SSH could
+  #  disturb the wired link this session rides on. The Wi-Fi comes up on the
+  #  reboot at the end of deploy instead, which is clean and can't strand you.
   netplan generate
-  netplan apply
+  echo "Wi-Fi config written for '$WIFI_SSID'. It activates on the next reboot."
 fi
 
 # ---- 9. updates + nightly reboot --------------------------------------------
