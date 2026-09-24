@@ -1,0 +1,2 @@
+# brigandry-kiosk
+Kiosk setup
