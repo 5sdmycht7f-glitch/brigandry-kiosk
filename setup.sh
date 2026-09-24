@@ -44,11 +44,12 @@ ALLOWLIST=(
 )
 
 # Seconds of no keyboard/mouse input before the session resets. 300 = 5 min.
-IDLE_SECONDS=600
+IDLE_SECONDS=300
 
-# Wi-Fi network the kiosk joins. The password is asked for at run time so it
-# never lives in this file (which is going on GitHub).
-WIFI_SSID="Brigandry Guest"
+# Wi-Fi network the kiosk joins. This is only the DEFAULT offered at run time;
+# the script asks you to confirm or retype it. The password is also asked for
+# at run time so it never lives in this file (which is going on GitHub).
+WIFI_SSID_DEFAULT="Brigandry Guest"
 
 TIMEZONE="America/Chicago"
 
@@ -132,11 +133,22 @@ for d in "${ALLOWLIST[@]}"; do
 done
 ALLOW_JSON="${ALLOW_JSON%,}"        # strip the trailing comma
 
+#  URL containment is DISARMED. A blocklist of ["*"] blocks not just other
+#  sites but the third-party asset/auth/CDN domains the TCGplayer kiosk login
+#  pulls from, which breaks the sign-in and the storefront. Enumerating every
+#  one of those domains is fragile (TCGplayer can change them anytime and
+#  silently break the kiosk), so the blocklist is left empty. Containment now
+#  rests on kiosk mode (no address bar to type a URL) plus the isolated guest
+#  VLAN. The allowlist below is inert while the blocklist is empty; it's kept
+#  as the record of intended sites. To RE-ARM strict lockdown once you've
+#  walked the login with DevTools and collected every asset domain, set
+#  "URLBlocklist" back to ["*"] and add those domains to the ALLOWLIST array.
+
 #  cat > FILE <<EOF ... EOF writes everything between the markers to FILE.
 #  Variables like $HOMEPAGE are expanded because EOF is unquoted.
 cat > "$POLICY_DIR/kiosk.json" <<EOF
 {
-  "URLBlocklist": ["*"],
+  "URLBlocklist": [],
   "URLAllowlist": [$ALLOW_JSON],
 
   "HomepageLocation": "$HOMEPAGE",
@@ -207,12 +219,8 @@ for _ in $(seq 1 30); do
   sleep 2
 done
 
-# swayidle: after IDLE_SECONDS with no input, kill Chrome (which ends the session).
-#  -w  wait for the command to finish before continuing
-#  &   run in the background so the script can go on to launch Chrome
-swayidle -w timeout "$IDLE_SECONDS" 'pkill -x chrome' &
-
-exec google-chrome \
+# Launch Chrome in the BACKGROUND and remember its process id ($!).
+google-chrome \
   --kiosk "$HOMEPAGE" \
   --ozone-platform=wayland \
   --user-data-dir="$PROFILE" \
@@ -225,7 +233,36 @@ exec google-chrome \
   --overscroll-history-navigation=0 \
   --disable-pinch \
   --password-store=basic \
-  --check-for-update-interval=31536000
+  --check-for-update-interval=31536000 &
+CHROME_PID=$!
+
+# Remember THIS script's own process id so swayidle can end it by number.
+SESSION_PID=$$
+
+# swayidle watches for inactivity. After IDLE_SECONDS with no input it sends
+# SIGTERM to this script. That ends the script, which ends cage, and systemd
+# (Restart=always) then starts the whole service again from scratch — a clean
+# relaunch, not a sniped process left behind as a zombie.
+#  -w  finish one command before listening for the next event
+#  The command is DOUBLE-quoted so $SESSION_PID is filled in now, giving
+#  swayidle a fixed "kill -TERM <number>" to run when it fires.
+swayidle -w timeout "$IDLE_SECONDS" "kill -TERM $SESSION_PID" &
+SWAYIDLE_PID=$!
+
+# On the way out (for any reason) stop swayidle and Chrome so nothing lingers
+# into the next run.
+cleanup() {
+  kill "$SWAYIDLE_PID" 2>/dev/null || true
+  kill "$CHROME_PID"   2>/dev/null || true
+}
+trap cleanup EXIT
+#  When swayidle's SIGTERM arrives, exit cleanly (which runs cleanup above).
+trap 'exit 0' TERM
+
+# Block here until Chrome exits on its own (crash, Ctrl+W). If swayidle fires
+# first, the TERM trap exits the script before this returns. Either path ends
+# the session and hands control back to systemd for a fresh start.
+wait "$CHROME_PID"
 EOF
 chmod +x /usr/local/bin/kiosk-session
 
@@ -286,13 +323,17 @@ systemctl mask sleep.target suspend.target hibernate.target hybrid-sleep.target
 systemctl mask ctrl-alt-del.target
 
 # ---- 8. Wi-Fi ---------------------------------------------------------------
-step "Configuring Wi-Fi for '$WIFI_SSID'"
+step "Configuring Wi-Fi"
 #  Find the wireless interface name (wl... e.g. wlp2s0). May differ per machine.
 WIFI_IFACE="$(ls /sys/class/net | grep '^wl' | head -n 1 || true)"
 if [[ -z "$WIFI_IFACE" ]]; then
   echo "No wireless interface found — skipping Wi-Fi. (Ethernet still works.)"
 else
-  #  read -s hides what you type; -r keeps backslashes literal; -p is the prompt.
+  #  read -r -p PROMPT VAR : ask a question and store the answer in VAR.
+  #  ${VAR:-default} means "use VAR, or the default if it was left empty".
+  read -r -p "Wi-Fi SSID [$WIFI_SSID_DEFAULT]: " WIFI_SSID
+  WIFI_SSID="${WIFI_SSID:-$WIFI_SSID_DEFAULT}"
+  #  -s hides what you type (for the password).
   read -r -s -p "Wi-Fi password for '$WIFI_SSID': " WIFI_PASS; echo
   cat > /etc/netplan/60-kiosk-wifi.yaml <<EOF
 network:
@@ -387,7 +428,7 @@ step "Done"
 echo "Hostname : $NEW_HOSTNAME"
 echo "Homepage : $HOMEPAGE"
 echo "Idle     : ${IDLE_SECONDS}s"
-echo "Wi-Fi    : ${WIFI_IFACE:-none} -> $WIFI_SSID"
+echo "Wi-Fi    : ${WIFI_IFACE:-none} -> ${WIFI_SSID:-n/a}"
 echo
 echo "Reboot to start the kiosk:   sudo reboot"
 echo "Then sign in once on screen with this kiosk's TCGplayer Kiosk User."
