@@ -48,7 +48,7 @@ IDLE_SECONDS=300
 
 # Wi-Fi network the kiosk joins. The password is asked for at run time so it
 # never lives in this file (which is going on GitHub).
-WIFI_SSID="Brigandry Guest1"
+WIFI_SSID="Brigandry Guest"
 
 TIMEZONE="America/Chicago"
 
