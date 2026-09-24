@@ -44,7 +44,7 @@ ALLOWLIST=(
 )
 
 # Seconds of no keyboard/mouse input before the session resets. 300 = 5 min.
-IDLE_SECONDS=300
+IDLE_SECONDS=600
 
 # Wi-Fi network the kiosk joins. The password is asked for at run time so it
 # never lives in this file (which is going on GitHub).
