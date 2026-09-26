@@ -155,7 +155,7 @@ cat > "$POLICY_DIR/kiosk.json" <<EOF
   "HomepageLocation": "$HOMEPAGE",
   "HomepageIsNewTabPage": false,
   "NewTabPageLocation": "$HOMEPAGE",
-  "RestoreOnStartup": 4,
+  "RestoreOnStartup": 1,
   "RestoreOnStartupURLs": ["$HOMEPAGE"],
 
   "DeveloperToolsAvailability": 2,
